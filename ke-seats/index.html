@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KE 마일리지 좌석</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --line:#dde1e8; --txt:#1c2330; --dim:#6b7585;
+          --p:#12805c; --pbg:#e3f5ec; --f:#9a6a00; --fbg:#fff1cc; --e:#3a6ea5; --rev:#c2570c; --on:#2456d6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12151c; --card:#1b1f29; --line:#2c3342; --txt:#e6e9f0; --dim:#8f99ab;
+            --p:#4fd39c; --pbg:#143326; --f:#ffd24a; --fbg:#3a3010; --e:#7fb0e6; --rev:#ffa55c; --on:#5b86ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--txt);
+         font:13px/1.4 -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif; }
+  main { max-width:1240px; margin:0 auto; }
+  h1 { font-size:17px; margin:0 0 12px; }
+  .row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:10px; }
+  button { border:1px solid var(--line); background:var(--card); color:var(--dim);
+           padding:6px 14px; border-radius:8px; font:inherit; font-weight:700; cursor:pointer; }
+  button.on { background:var(--on); border-color:var(--on); color:#fff; }
+  .dim { color:var(--dim); }
+  #asof { flex:1; min-width:160px; max-width:420px; }
+  .months { display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:14px; }
+  .month { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px; }
+  .month h2 { font-size:13px; margin:0 0 6px; }
+  .grid { display:grid; grid-template-columns:repeat(7, minmax(0, 1fr)); gap:3px; }
+  .wd { text-align:center; font-size:10px; color:var(--dim); }
+  .cell { min-height:40px; padding:3px; border:1px solid var(--line); border-radius:6px;
+          display:flex; flex-direction:column; justify-content:space-between; font-size:10px; }
+  .cell.P { background:var(--pbg); border-color:var(--p); }
+  .cell.F { background:var(--fbg); border-color:var(--f); }
+  .cell.past { opacity:.3; }
+  .top { display:flex; justify-content:space-between; gap:2px; color:var(--dim); }
+  .peak { color:var(--f); font-weight:800; }
+  .rev { color:var(--rev); font-weight:800; }
+  .cab { display:flex; gap:3px; font-weight:800; font-size:11px; }
+  .cF { color:var(--f); } .cP { color:var(--p); } .cE { color:var(--e); font-weight:600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>대한항공 마일리지 좌석 현황</h1>
+  <div class="row" id="airports"></div>
+  <div class="row" id="dirs"></div>
+  <div class="row">
+    <span class="dim">시점</span>
+    <input type="range" id="asof" min="0" max="0" value="0">
+    <b id="asofLabel"></b>
+    <span class="dim" id="meta"></span>
+  </div>
+  <div class="row dim">
+    <span><b class="cF">F</b> 퍼스트</span><span><b class="cP">P</b> 프레스티지</span>
+    <span><b class="cE">E</b> 이코노미</span><span><b class="rev">숫자</b> 유상 비즈 잔여석</span>
+    <span><b class="peak">굵은 날짜</b> 성수기</span>
+  </div>
+  <div class="months" id="months"></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const p2 = (n) => String(n).padStart(2, '0');
+const ymd = (d) => '' + d.getFullYear() + p2(d.getMonth() + 1) + p2(d.getDate());
+const fmtTs = (ts) => ts ? new Date(ts).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' }) : '-';
+
+let DATA = { current: {}, revenue: {}, days: [] };
+let AP = null, DIR = 'out', ASOF = null;   // ASOF = null이면 현재
+
+const routes = () => [...new Set([...Object.keys(DATA.current), ...Object.keys(DATA.revenue)])];
+const route = () => DIR === 'out' ? 'ICN-' + AP : AP + '-ICN';
+
+async function load() {
+  const res = await fetch('/api/data' + (ASOF ? '?asof=' + ASOF : ''));
+  const days = DATA.days;
+  DATA = await res.json();
+  if (ASOF) DATA.days = days;          // 과거 시점을 보는 중에는 슬라이더 범위를 유지
+  render();
+}
+
+function buttons(box, items, selected, onPick) {
+  box.textContent = '';
+  for (const [value, label] of items) {
+    const b = el('button', value === selected ? 'on' : '', label);
+    b.onclick = () => onPick(value);
+    box.appendChild(b);
+  }
+}
+
+function render() {
+  const aps = [...new Set(routes().map((r) => r.split('-').find((a) => a !== 'ICN')))].sort();
+  if (!aps.includes(AP)) AP = aps[0] || null;
+  buttons($('airports'), aps.map((a) => [a, a]), AP, (a) => { AP = a; render(); });
+  buttons($('dirs'), [['out', 'ICN 출발'], ['in', 'ICN 도착']], DIR, (d) => { DIR = d; render(); });
+
+  const slider = $('asof'), n = DATA.days.length;
+  slider.max = Math.max(0, n - 1);
+  if (!ASOF) slider.value = slider.max;
+  $('asofLabel').textContent = n ? (ASOF || DATA.days[n - 1]) + (ASOF ? ' (과거)' : ' (현재)') : '수집된 데이터 없음';
+
+  const cur = DATA.current[route()] || {}, rev = DATA.revenue[route()] || {};
+  const today = (ASOF || '').replace(/-/g, '') || ymd(new Date());
+  const box = $('months'); box.textContent = '';
+  let nP = 0, nF = 0, last = 0;
+  const start = new Date(+today.slice(0, 4), +today.slice(4, 6) - 1, 1);
+  for (let m = 0; m <= 12; m++) {
+    const first = new Date(start.getFullYear(), start.getMonth() + m, 1);
+    const month = el('div', 'month');
+    month.appendChild(el('h2', '', first.getFullYear() + '.' + p2(first.getMonth() + 1)));
+    const grid = el('div', 'grid');
+    for (const w of '일월화수목금토') grid.appendChild(el('div', 'wd', w));
+    for (let i = 0; i < first.getDay(); i++) grid.appendChild(el('div'));
+    const daysIn = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+    for (let day = 1; day <= daysIn; day++) {
+      const key = ymd(new Date(first.getFullYear(), first.getMonth(), day));
+      const past = key < today;
+      const s = past ? null : cur[key], rv = past ? null : rev[key];
+      if (s) { if (s.P) nP++; if (s.F) nF++; last = Math.max(last, s.ts); }
+      const cell = el('div', 'cell' + (past ? ' past' : '') + (s && s.F ? ' F' : s && s.P ? ' P' : ''));
+      const top = el('div', 'top');
+      top.appendChild(el('span', s && s.peak ? 'peak' : '', day));
+      if (rv) top.appendChild(el('span', 'rev', rv.max >= 9 ? '9+' : rv.max));
+      const cab = el('div', 'cab');
+      for (const c of 'FPE') if (s && s[c]) cab.appendChild(el('span', 'c' + c, c));
+      cell.append(top, cab);
+      cell.title = key + '\n어워드: ' + (s ? (['F', 'P', 'E'].filter((c) => s[c]).join('+') || '없음') + (s.peak ? ' · 성수기' : '') + ' (' + fmtTs(s.ts) + ')' : '데이터 없음')
+        + '\n유상 비즈: ' + (rv ? Object.entries(rv.classes).map(([c, q]) => c + ':' + q).join(' ') + ' (' + fmtTs(rv.ts) + ')' : '-');
+      grid.appendChild(cell);
+    }
+    month.appendChild(grid);
+    box.appendChild(month);
+  }
+  $('meta').textContent = AP ? `${route().replace('-', ' → ')} · 프레스티지 ${nP}일 · 퍼스트 ${nF}일 · 최근 수집 ${fmtTs(last)}` : '';
+}
+
+$('asof').addEventListener('change', (e) => {
+  const i = +e.target.value;
+  ASOF = i >= DATA.days.length - 1 ? null : DATA.days[i];
+  load();
+});
+load();
+setInterval(() => { if (!ASOF && !document.hidden) load(); }, 5 * 60 * 1000);
+</script>
+</body>
+</html>
